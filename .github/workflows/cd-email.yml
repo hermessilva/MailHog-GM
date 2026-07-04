@@ -1,8 +1,10 @@
-name: CD — E-mail (MailHog-GM)
+name: CI/Publish — MailHog-GM
 
 # Compila o fork MailHog-GM, roda os testes de integração (envio + leitura de
-# e-mail), publica a imagem no GHCR e faz deploy no Swarm — SUBSTITUINDO a stack
-# de e-mail que roda hoje (mailhog/mailhog:latest). A antiga é removida.
+# e-mail) e publica a imagem no GHCR (ghcr.io/<owner>/mailhog-gm).
+# O DEPLOY no Swarm é feito pelo repositório TokenGuard
+# (.github/workflows/cd-email.yml lá), que consome esta imagem e tem os secrets
+# de infra — evitando compartilhar secrets entre repositórios.
 
 on:
   push:
@@ -23,7 +25,6 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/mailhog-gm
-  TARGET_STACK: tokenguard-email
 
 jobs:
   # ============================================================
@@ -109,128 +110,3 @@ jobs:
             [ $RETRY_COUNT -lt $MAX_RETRIES ] && sleep 5
           done
           [ $RETRY_COUNT -ge $MAX_RETRIES ] && { echo "Push failed after $MAX_RETRIES attempts"; exit 1; } || true
-
-  # ============================================================
-  # Deploy no Swarm — substitui a stack de e-mail existente
-  # ============================================================
-  deploy:
-    name: Deploy E-mail Stack
-    runs-on: ubuntu-latest
-    needs: [build-push]
-    # Só roda quando o alvo de deploy (Swarm privado) estiver configurado. Em
-    # forks/repo público sem essa infra, os jobs test + build-push já validam e
-    # publicam a imagem; o deploy é ignorado sem falhar o workflow.
-    if: ${{ vars.STAGING_HOST != '' }}
-    environment:
-      name: staging
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create target directory
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ vars.STAGING_HOST }}
-          username: ${{ vars.STAGING_USER }}
-          key: ${{ secrets.STAGING_SSH_KEY }}
-          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
-          script: mkdir -p /opt/tokenguard/stacks
-
-      - name: Copy e-mail stack to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ vars.STAGING_HOST }}
-          username: ${{ vars.STAGING_USER }}
-          key: ${{ secrets.STAGING_SSH_KEY }}
-          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
-          source: "Deploy/stack/e-mail.yaml"
-          target: "/opt/tokenguard/stacks/"
-          strip_components: 2
-
-      - name: Deploy MailHog-GM to Swarm (replace legacy)
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ vars.STAGING_HOST }}
-          username: ${{ vars.STAGING_USER }}
-          key: ${{ secrets.STAGING_SSH_KEY }}
-          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
-          script: |
-            set -e
-            OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-            IMAGE="ghcr.io/${OWNER}/mailhog-gm:${{ needs.build-push.outputs.version }}"
-            TARGET_STACK="${{ env.TARGET_STACK }}"
-
-            echo "Imagem: ${IMAGE}"
-
-            # Login no GHCR
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
-
-            # Rede overlay compartilhada (reaproveitada)
-            docker network create --driver overlay tokenguard_public 2>/dev/null || true
-
-            # Remove QUALQUER stack legada que rode um serviço 'mailcrab' e que não
-            # seja a nossa — libera as portas 25/2525/587 e para a antiga.
-            for svc in $(docker service ls --filter name=mailcrab --format '{{.Name}}'); do
-              NS=$(docker service inspect "$svc" --format '{{ index .Spec.Labels "com.docker.stack.namespace" }}' 2>/dev/null || true)
-              if [ -n "$NS" ] && [ "$NS" != "$TARGET_STACK" ]; then
-                echo "Removendo stack de e-mail legada: $NS"
-                docker stack rm "$NS" || true
-              fi
-            done
-
-            # Espera a stack antiga liberar as portas em modo ingress
-            sleep 20
-
-            # Pull da nova imagem
-            docker pull "${IMAGE}" || true
-
-            # Deploy (sobrepõe/atualiza a stack de e-mail)
-            IMAGE="${IMAGE}" docker stack deploy \
-              -c /opt/tokenguard/stacks/e-mail.yaml \
-              --with-registry-auth \
-              "${TARGET_STACK}"
-
-            # Estabiliza
-            sleep 15
-
-            echo "=== E-mail service status ==="
-            docker service ls | grep "${TARGET_STACK}" || true
-            docker service ps "${TARGET_STACK}_mailcrab" --no-trunc 2>/dev/null || true
-
-            # Health check: API HTTP responde dentro do container
-            echo "=== Health Check ==="
-            RETRIES=10
-            COUNT=0
-            until [ $COUNT -ge $RETRIES ]; do
-              CID=$(docker ps -q -f name="${TARGET_STACK}_mailcrab" 2>/dev/null)
-              if [ -n "$CID" ] && docker exec "$CID" wget -q -O - http://127.0.0.1:8025/api/v2/messages >/dev/null 2>&1; then
-                echo "MailHog-GM respondendo na API."
-                break
-              fi
-              COUNT=$((COUNT + 1))
-              echo "Tentativa $COUNT/$RETRIES falhou, aguardando 10s..."
-              sleep 10
-            done
-
-            if [ $COUNT -ge $RETRIES ]; then
-              echo "WARNING: health check não passou após $RETRIES tentativas."
-              docker service logs "${TARGET_STACK}_mailcrab" --tail 30 2>/dev/null || true
-              exit 1
-            fi
-
-      - name: Purge unused images on deploy host
-        if: always()
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ vars.STAGING_HOST }}
-          username: ${{ vars.STAGING_USER }}
-          key: ${{ secrets.STAGING_SSH_KEY }}
-          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
-          script: |
-            set +e
-            echo "=== Disk usage BEFORE prune ==="
-            docker system df || true
-            docker image prune -af
-            docker builder prune -f || true
-            echo "=== Disk usage AFTER prune ==="
-            docker system df || true
