@@ -2,5 +2,7 @@
 build
 test
 docs
+_uisrc
+_uitool
 **/bin
 **/obj

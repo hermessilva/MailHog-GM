@@ -49,6 +49,21 @@ Alvo:
 - **Flags novas** (todas com env `MH_*`): `smtp-auth-allow-any`, `smtp-auth-file`, `smtp-require-tls`, `smtp-tls-cert`, `smtp-tls-key`, `smtps-bind-addr`.
 - **Pendente**: compilar/testar com toolchain Go (não instalado neste ambiente).
 
+## UI (GMail Placebo)
+
+A UI web foi renomeada para **"GMail Placebo"** com um tema elegante (acento estilo Gmail). Os assets são embutidos via **go-bindata** em `vendor/github.com/mailhog/MailHog-UI/assets/assets.go`. As fontes editáveis ficam em `_uisrc/assets/` (templates `layout.html`/`index.html` e `css/style.css`).
+
+Regenerar o bindata após editar `_uisrc/` (precisa de Docker):
+
+```bash
+docker run --rm -v "${PWD}:/go/src/github.com/mailhog/MailHog" \
+  -w /go/src/github.com/mailhog/MailHog golang:1.20-alpine sh -c \
+  "apk add --no-cache git >/dev/null; export GO111MODULE=on GOFLAGS=-mod=mod; \
+   go install github.com/kevinburke/go-bindata/v4/go-bindata@latest; \
+   cd _uisrc && /go/bin/go-bindata -pkg assets \
+   -o ../vendor/github.com/mailhog/MailHog-UI/assets/assets.go assets/..."
+```
+
 ## Regras de trabalho
 
 - Preservar compatibilidade com API/UI existentes do MailHog.

@@ -1,0 +1,296 @@
+/* ============================================================= */
+/* GMail Placebo — tema elegante                                  */
+/* ============================================================= */
+:root {
+  --gp-red: #ea4335;
+  --gp-blue: #1a73e8;
+  --gp-ink: #202124;
+  --gp-muted: #5f6368;
+  --gp-line: #e8eaed;
+  --gp-bg: #f6f8fc;
+  --gp-surface: #ffffff;
+  --gp-hover: #f1f3f4;
+  --gp-shadow: 0 1px 2px rgba(60,64,67,.08), 0 2px 6px rgba(60,64,67,.10);
+}
+
+body {
+  background: var(--gp-bg);
+  color: var(--gp-ink);
+  font-family: "Google Sans", Roboto, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Navbar */
+.navbar-default {
+  background: var(--gp-surface);
+  border: none;
+  box-shadow: var(--gp-shadow);
+  min-height: 60px;
+}
+.navbar-default .navbar-brand {
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--gp-ink);
+  letter-spacing: .2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 60px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.navbar-brand .brand-mark {
+  color: var(--gp-red);
+  font-size: 24px;
+  line-height: 1;
+}
+.navbar-brand .brand-accent { color: var(--gp-blue); }
+.navbar-default .navbar-nav > li > a {
+  color: var(--gp-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 60px;
+}
+.navbar-default .navbar-nav > li > a:hover { color: var(--gp-ink); }
+
+/* Search bar */
+.navbar-form { margin-top: 12px; }
+#search {
+  border-radius: 24px;
+  border: 1px solid transparent;
+  background: var(--gp-hover);
+  height: 44px;
+  box-shadow: none;
+  transition: background .15s, box-shadow .15s, border-color .15s;
+}
+#search:focus {
+  background: var(--gp-surface);
+  border-color: var(--gp-line);
+  box-shadow: var(--gp-shadow);
+}
+.left-inner-addon .glyphicon { padding: 13px 14px; }
+
+/* Sidebar pills */
+.nav-pills > li > a {
+  border-radius: 0 24px 24px 0;
+  color: var(--gp-ink);
+  font-weight: 500;
+  padding: 10px 18px;
+  margin-right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.nav-pills > li > a:hover { background: var(--gp-hover); }
+.nav-pills > li.active > a,
+.nav-pills > li.active > a:focus,
+.nav-pills > li.active > a:hover {
+  background: #e8f0fe;
+  color: var(--gp-blue);
+}
+.has-event-source { color: #188038; }
+.no-event-source { color: var(--gp-red); }
+
+/* Cards / wells */
+.well, .jim-well {
+  background: var(--gp-surface);
+  border: 1px solid var(--gp-line);
+  border-radius: 12px;
+  box-shadow: var(--gp-shadow);
+}
+
+/* Buttons */
+.btn {
+  border-radius: 20px;
+  font-weight: 500;
+  border: 1px solid var(--gp-line);
+}
+.btn-default { background: var(--gp-surface); color: var(--gp-blue); }
+.btn-default:hover { background: var(--gp-hover); }
+.btn-primary { background: var(--gp-blue); border-color: var(--gp-blue); }
+.btn-danger { background: var(--gp-red); border-color: var(--gp-red); }
+
+/* Message list */
+.msglist-message {
+  border-bottom: 1px solid var(--gp-line);
+  padding: 12px 16px;
+  border-radius: 8px;
+  transition: background .12s, box-shadow .12s;
+}
+.msglist-message:hover {
+  background: var(--gp-surface);
+  box-shadow: var(--gp-shadow);
+  border-bottom-color: transparent;
+}
+.msglist-message .subject.unread { color: var(--gp-ink); }
+.msglist-message .from { color: var(--gp-muted); }
+
+/* Toolbar */
+.toolbar { border-bottom: 1px solid var(--gp-line); }
+
+/* Headers table */
+.headers tbody th { color: var(--gp-muted); }
+
+/*********/
+/* Modal */
+.modal-dialog {
+  margin-top: 65px;
+}
+
+/*******/
+/* Nav */
+.navbar .col-md-10 {
+  padding-left: 0;
+}
+
+.navbar-brand > img {
+  display: inline-block;
+}
+
+.navbar-form {
+  padding-left: 0;
+}
+
+/**************/
+/* Search bar */
+#search {
+  width: 500px;
+}
+@media (max-width: 991px) {
+  #search {
+    width: 420px;
+  }
+}
+
+/* http://stackoverflow.com/questions/18838964/add-bootstrap-glyphicon-to-input-box */
+.left-inner-addon {
+  position: relative;
+}
+
+.left-inner-addon input {
+  padding-left: 30px;
+}
+
+.left-inner-addon .glyphicon {
+  color: #aaa;
+  position: absolute;
+  padding: 9px 10px;
+  pointer-events: none;
+}
+
+/***************/
+/* Sidebar nav */
+.nav-stacked {
+  margin-top: 10px;
+}
+
+.has-event-source {
+  color: green;
+}
+
+.no-event-source {
+  color: red;
+}
+
+/*******/
+/* Jim */
+.jim-well {
+  margin-top: 20px;
+}
+
+.jim-well h3 {
+  margin-top: 0;
+}
+
+.jim-config {
+  margin-top: 3px;
+  padding: 5px;
+  font-size: 0.9em;
+}
+
+.jim-config .jim-config-item {
+  margin-bottom: 2px;
+}
+
+/***********/
+/* Toolbar */
+.toolbar {
+  padding: 5px;
+  border-bottom: 1px solid #ccc;
+}
+
+.toolbar .btn {
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+.toolbar .spacer {
+  display: inline-block;
+  width: 20px;
+}
+
+.message-count {
+  padding-right: 10px;
+}
+
+/***********/
+/* Content */
+.content {
+  position: fixed;
+  right: 0;
+  top: 51px;
+  bottom: 0;
+  overflow-y: scroll;
+  padding-bottom: 80px;
+}
+
+.mail-content {
+  margin-top: 20px;
+}
+
+.msglist-message {
+  border-bottom: 1px solid #ccc;
+  padding: 5px 0;
+  cursor: pointer;
+}
+
+.msglist-message .subject.unread {
+  color: #666;
+  font-weight: bold;
+}
+
+/***********/
+/* Preview */
+#preview-plain, #preview-source {
+  white-space: pre;
+  font-family: Courier New, Courier, System, fixed-width;
+  padding: 10px;
+}
+
+.preview .tab-content {
+  overflow-y: scroll;
+}
+
+.headers {
+  margin-top: 10px;
+}
+
+.headers tbody td {
+  width: 100%;
+}
+
+.headers tbody th {
+  white-space: nowrap;
+  text-align: right;
+  color: #666;
+  font-weight: normal;
+}
+
+.haeders table td, .headers table th {
+  padding: 2px 10px
+}
+
+.mime-part {
+  padding: 10px;
+}
