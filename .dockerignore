@@ -1,1 +1,6 @@
-*
+.git
+build
+test
+docs
+**/bin
+**/obj

@@ -1,5 +1,76 @@
-MailHog [ ![Download](https://img.shields.io/github/release/mailhog/MailHog.svg) ](https://github.com/mailhog/MailHog/releases/tag/v1.0.0) [![GoDoc](https://godoc.org/github.com/mailhog/MailHog?status.svg)](https://godoc.org/github.com/mailhog/MailHog) [![Build Status](https://travis-ci.org/mailhog/MailHog.svg?branch=master)](https://travis-ci.org/mailhog/MailHog)
-=========
+MailHog-GM
+==========
+
+> **Fork de [MailHog](https://github.com/mailhog/MailHog)**, originalmente criado por Ian Kent e colaboradores, inspirado no [MailCatcher](https://mailcatcher.me/). Todo o crédito do projeto base pertence aos autores do MailHog. Veja o README original em https://github.com/mailhog/MailHog.
+>
+> Este fork adapta o MailHog para atuar como **substituto do Gmail em ambientes de teste**:
+>
+> * **Autenticação SMTP nível Gmail** — aceita os mesmos mecanismos de auth (PLAIN/LOGIN/XOAUTH2 sobre STARTTLS/TLS) que clientes configurados para `smtp.gmail.com` esperam, permitindo redirecionar o envio para o MailHog-GM sem reconfigurar o cliente.
+> * **API de recebimento/busca de emails** — os endpoints de listagem retornam sempre o **email mais novo primeiro**.
+>
+> As diretivas de desenvolvimento deste fork estão em [`CLAUDE.md`](CLAUDE.md).
+
+## Intenção do projeto
+
+O MailHog-GM existe para **substituir o Gmail (`smtp.gmail.com`) em ambientes de teste**, sem que a aplicação sob teste precise mudar de configuração. A ideia é ser um "placebo do Gmail": a mesma aplicação que em produção envia via Gmail aponta, em teste, para o MailHog-GM — que aceita a conexão com o mesmo nível de autenticação (STARTTLS/SMTPS + AUTH), captura os e-mails em vez de entregá-los, e os expõe por uma API HTTP para inspeção automatizada (mais novo primeiro).
+
+O que foi feito neste fork, sobre o MailHog original:
+
+1. **Autenticação SMTP nível Gmail** — `STARTTLS`/SMTPS com certificado self-signed gerado em memória, `AUTH PLAIN/LOGIN/XOAUTH2`, validação de credenciais opcional (modo estrito) ou aceitação de qualquer credencial (modo placebo, padrão).
+2. **API ordenada (mais novo primeiro)** — todos os endpoints de listagem retornam por `Created` decrescente, em qualquer backend.
+3. **Testes de integração ponta a ponta** — projeto C# .NET que envia e lê e-mails reais (confirmação de e-mail, token de reset de senha, ordenação).
+4. **Empacotamento e entrega** — `Dockerfile` que compila o fork do código-fonte local, `docker compose` que sobe o serviço e roda os testes, e um pipeline de CI/CD que publica a imagem e faz deploy no Swarm, substituindo a stack de e-mail anterior.
+
+### Recursos do fork (MailHog-GM)
+
+#### Autenticação SMTP nível Gmail
+
+O servidor SMTP anuncia `STARTTLS` e os mecanismos `AUTH PLAIN LOGIN XOAUTH2`, como o Gmail. Um certificado TLS **self-signed é gerado automaticamente em memória**, então `STARTTLS`/SMTPS funcionam sem configuração.
+
+Flags / variáveis de ambiente:
+
+| Flag | Env | Padrão | Descrição |
+|------|-----|--------|-----------|
+| `-smtp-auth-allow-any` | `MH_SMTP_AUTH_ALLOW_ANY` | `true` | Aceita **qualquer** credencial (modo placebo). Ignorado se `-smtp-auth-file` for usado. |
+| `-smtp-auth-file` | `MH_SMTP_AUTH_FILE` | | Arquivo `user:password` por linha → modo estrito. |
+| `-smtp-require-tls` | `MH_SMTP_REQUIRE_TLS` | `false` | Exige `STARTTLS` antes de `AUTH`/`MAIL`. |
+| `-smtp-tls-cert` | `MH_SMTP_TLS_CERT` | | Certificado PEM (opcional; self-signed se vazio). |
+| `-smtp-tls-key` | `MH_SMTP_TLS_KEY` | | Chave PEM (opcional). |
+| `-smtps-bind-addr` | `MH_SMTPS_BIND_ADDR` | | Liga listener SMTPS (TLS implícito, ex.: `0.0.0.0:1465`). Vazio desabilita. |
+
+> **Certificado self-signed:** clientes que validam a cadeia (ex.: `System.Net.Mail.SmtpClient` do .NET) rejeitam o cert gerado. Em teste, ou forneça um cert confiável via `-smtp-tls-cert`/`-smtp-tls-key`, ou desabilite a validação no cliente (ex.: `ServicePointManager.ServerCertificateValidationCallback = (s,c,ch,e) => true;`).
+
+#### API — mais novo primeiro
+
+Todos os endpoints de listagem retornam ordenados por `Created` decrescente (mais novo primeiro), em qualquer backend (`memory`/`mongodb`/`maildir`):
+
+* `GET /api/v1/messages`
+* `GET /api/v2/messages`
+* `GET /api/v2/search?kind=...&query=...`
+
+#### Testes (Docker)
+
+Um projeto C# .NET (`test/MailHogGM.Tests`) envia e-mails de exemplo via SMTP (STARTTLS + AUTH) e os lê de volta pela API. Cobre: **confirmação de e-mail**, **token de reset de senha** e a **ordenação mais-novo-primeiro**.
+
+Compilar o fork e rodar os testes num único comando:
+
+```bash
+docker compose up --build --abort-on-container-exit --exit-code-from tests
+```
+
+O `Dockerfile` compila o MailHog-GM a partir do código-fonte local (GOPATH + `vendor/`); o serviço `tests` executa `dotnet test` contra o container. Saída `0` = verde.
+
+#### Deploy (CI/CD)
+
+O workflow [`.github/workflows/cd-email.yml`](.github/workflows/cd-email.yml) roda os testes de integração como gate, publica a imagem no GHCR e faz `docker stack deploy` no Swarm — **substituindo a stack de e-mail anterior** (a antiga é removida). A stack de produção está em [`Deploy/stack/e-mail.yaml`](Deploy/stack/e-mail.yaml), expondo SMTP nas portas `25`/`2525` e submissão STARTTLS na `587`.
+
+### Créditos e licença
+
+Este é um trabalho derivado (fork) do **MailHog**, criado por **Ian Kent** e colaboradores, licenciado sob **MIT**. O aviso de copyright e a licença originais são preservados em [`LICENSE.md`](LICENSE.md) (`Copyright (c) 2014 - 2016 Ian Kent`). Todos os direitos do software base pertencem aos seus autores originais; as alterações deste fork são distribuídas sob a mesma licença MIT. Veja o projeto original em https://github.com/mailhog/MailHog.
+
+---
+
+## MailHog (original)
 
 Inspired by [MailCatcher](https://mailcatcher.me/), easier to install.
 

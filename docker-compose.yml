@@ -1,0 +1,33 @@
+# Sobe o MailHog-GM e roda os testes de integração C# contra ele.
+#
+#   docker compose up --build --abort-on-container-exit --exit-code-from tests
+#
+# Sai com o código do container "tests" (0 = verde).
+
+services:
+  mailhog:
+    build: .
+    image: mailhog-gm:local
+    ports:
+      - "1025:1025"   # SMTP (STARTTLS)
+      - "8025:8025"   # UI + API HTTP
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8025/api/v2/messages"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  tests:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    depends_on:
+      mailhog:
+        condition: service_healthy
+    working_dir: /src
+    volumes:
+      - ./test:/src
+    environment:
+      MAILHOG_SMTP_HOST: mailhog
+      MAILHOG_SMTP_PORT: "1025"
+      MAILHOG_ENABLE_SSL: "true"
+      MAILHOG_API: "http://mailhog:8025"
+    command: ["dotnet", "test", "MailHogGM.Tests/MailHogGM.Tests.csproj", "--logger:console;verbosity=normal"]

@@ -113,6 +113,7 @@ func (apiv2 *APIv2) messages(w http.ResponseWriter, req *http.Request) {
 	res.Count = len([]data.Message(*messages))
 	res.Start = start
 	res.Items = []data.Message(*messages)
+	sortMessagesDesc(res.Items)
 	res.Total = apiv2.config.Storage.Count()
 
 	bytes, _ := json.Marshal(res)
@@ -146,6 +147,7 @@ func (apiv2 *APIv2) search(w http.ResponseWriter, req *http.Request) {
 	res.Count = len([]data.Message(*messages))
 	res.Start = start
 	res.Items = []data.Message(*messages)
+	sortMessagesDesc(res.Items)
 	res.Total = total
 
 	b, _ := json.Marshal(res)

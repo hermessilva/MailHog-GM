@@ -1,0 +1,49 @@
+version: '3.8'
+
+# Stack de e-mail — MailHog-GM (fork "placebo do Gmail").
+# Substitui o antigo mailhog/mailhog:latest. A imagem vem do CD (GHCR) via a
+# variável de ambiente IMAGE; o default permite deploy manual.
+
+services:
+  mailcrab: # Mantemos o nome para não quebrar seu Nginx
+    image: ${IMAGE:-ghcr.io/hermessilva/mailhog-gm:latest}
+    hostname: mail.pildra.com.br
+    networks:
+      - tokenguard_public
+    environment:
+      # Persistência (maildir), igual ao que rodava antes.
+      - MH_STORAGE=maildir
+      - MH_MAILDIR_PATH=/data
+      # Hostname anunciado no EHLO/HELO e usado no cert TLS self-signed.
+      - MH_HOSTNAME=mail.pildra.com.br
+      # Autenticação nível Gmail (placebo): aceita qualquer credencial.
+      - MH_SMTP_AUTH_ALLOW_ANY=true
+    volumes:
+      - /mnt/data/mailcrab:/data
+    ports:
+      # SMTP legado (mantido): MTA na 25, submissão alternativa na 2525.
+      - target: 1025
+        published: 25
+        protocol: tcp
+        mode: ingress
+      - target: 1025
+        published: 2525
+        protocol: tcp
+        mode: ingress
+      # Submissão estilo Gmail (STARTTLS) na 587.
+      - target: 1025
+        published: 587
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+
+networks:
+  tokenguard_public:
+    external: true
+    name: tokenguard_public

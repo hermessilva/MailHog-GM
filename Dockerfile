@@ -1,29 +1,39 @@
 #
-# MailHog Dockerfile
+# MailHog-GM Dockerfile
+#
+# Compila o fork a partir do código-fonte LOCAL (incluindo as alterações
+# vendorizadas), diferente do MailHog original que era baixado via `go install`.
 #
 
-FROM golang:1.18-alpine as builder
+FROM golang:1.18-alpine AS builder
 
-# Install MailHog:
-RUN apk --no-cache add --virtual build-dependencies \
-    git \
-  && mkdir -p /root/gocode \
-  && export GOPATH=/root/gocode \
-  && go install github.com/mailhog/MailHog@latest
+# GOPATH mode: não há go.mod; as dependências vêm de ./vendor.
+ENV GO111MODULE=off
+ENV GOPATH=/go
+ENV CGO_ENABLED=0
+
+RUN apk --no-cache add git
+
+# O import path do projeto é github.com/mailhog/MailHog.
+WORKDIR /go/src/github.com/mailhog/MailHog
+COPY . .
+
+# GOPATH mode usa o diretório vendor/ automaticamente.
+RUN go build -o /MailHog .
+
+# ---------------------------------------------------------------------------
 
 FROM alpine:3
-# Add mailhog user/group with uid/gid 1000.
-# This is a workaround for boot2docker issue #581, see
-# https://github.com/boot2docker/boot2docker/issues/581
+
+# Usuário/grupo mailhog com uid/gid 1000 (workaround boot2docker #581).
 RUN adduser -D -u 1000 mailhog
 
-COPY --from=builder /root/gocode/bin/MailHog /usr/local/bin/
+COPY --from=builder /MailHog /usr/local/bin/MailHog
 
 USER mailhog
-
 WORKDIR /home/mailhog
 
 ENTRYPOINT ["MailHog"]
 
-# Expose the SMTP and HTTP ports:
-EXPOSE 1025 8025
+# SMTP, SMTPS e HTTP (UI/API).
+EXPOSE 1025 1465 8025

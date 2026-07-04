@@ -97,6 +97,10 @@ func main() {
 	}
 	go smtp.Listen(apiconf, exitCh)
 
+	if apiconf.SMTPSBindAddr != "" {
+		go smtp.ListenTLS(apiconf, exitCh)
+	}
+
 	<-exitCh
 	log.Printf("Received exit signal")
 }

@@ -1,10 +1,12 @@
 package config
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"io/ioutil"
 	"log"
+	"strings"
 
 	"github.com/ian-kent/envconf"
 	"github.com/mailhog/MailHog-Server/monkey"
@@ -27,6 +29,14 @@ func DefaultConfig() *Config {
 		WebPath:      "",
 		MessageChan:  make(chan *data.Message),
 		OutgoingSMTP: make(map[string]*OutgoingSMTP),
+
+		SMTPSBindAddr:    "",
+		SMTPAuthAllowAny: true,
+		SMTPAuthFile:     "",
+		SMTPRequireTLS:   false,
+		SMTPTLSCert:      "",
+		SMTPTLSKey:       "",
+		AuthCredentials:  make(map[string]string),
 	}
 }
 
@@ -49,6 +59,31 @@ type Config struct {
 	OutgoingSMTPFile string
 	OutgoingSMTP     map[string]*OutgoingSMTP
 	WebPath          string
+
+	// SMTPSBindAddr, quando informado, liga um listener SMTPS (TLS implícito,
+	// ex.: 0.0.0.0:1465). Vazio desabilita.
+	SMTPSBindAddr string
+
+	// --- Autenticação SMTP nível Gmail (placebo de teste) ---
+
+	// SMTPAuthAllowAny aceita qualquer credencial em AUTH (PLAIN/LOGIN/CRAM-MD5/
+	// XOAUTH2). É o modo padrão: permite substituir o Gmail sem conhecer a senha
+	// real usada pela aplicação sob teste.
+	SMTPAuthAllowAny bool
+	// SMTPAuthFile aponta para um arquivo "user:password" por linha. Quando
+	// informado, ativa o modo estrito: apenas essas credenciais são aceitas.
+	SMTPAuthFile string
+	// SMTPRequireTLS exige STARTTLS antes de AUTH/MAIL, como faz o Gmail.
+	SMTPRequireTLS bool
+	// SMTPTLSCert / SMTPTLSKey são um par PEM opcional para o servidor SMTP.
+	// Se vazios, um certificado self-signed é gerado em memória.
+	SMTPTLSCert string
+	SMTPTLSKey  string
+
+	// AuthCredentials é preenchido a partir de SMTPAuthFile (user -> password).
+	AuthCredentials map[string]string
+	// TLSConfig é montado em Configure() e usado por STARTTLS/SMTPS.
+	TLSConfig *tls.Config
 }
 
 // OutgoingSMTP is an outgoing SMTP server config
@@ -112,7 +147,69 @@ func Configure() *Config {
 		cfg.OutgoingSMTP = o
 	}
 
+	configureSMTPAuth()
+	configureSMTPTLS()
+
 	return cfg
+}
+
+// configureSMTPAuth carrega o arquivo de credenciais (modo estrito) quando
+// informado. Formato: uma linha "user:password" por credencial; linhas vazias
+// e iniciadas por '#' são ignoradas.
+func configureSMTPAuth() {
+	if len(cfg.SMTPAuthFile) == 0 {
+		if cfg.SMTPAuthAllowAny {
+			log.Println("[SMTP] AUTH em modo placebo: qualquer credencial é aceita")
+		}
+		return
+	}
+
+	b, err := ioutil.ReadFile(cfg.SMTPAuthFile)
+	if err != nil {
+		log.Fatalf("[SMTP] Erro lendo arquivo de auth %s: %s", cfg.SMTPAuthFile, err)
+	}
+
+	cfg.AuthCredentials = make(map[string]string)
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			log.Fatalf("[SMTP] Linha inválida no arquivo de auth (esperado user:password): %q", line)
+		}
+		cfg.AuthCredentials[parts[0]] = parts[1]
+	}
+
+	// Presença de arquivo de credenciais implica modo estrito.
+	cfg.SMTPAuthAllowAny = false
+	log.Printf("[SMTP] AUTH em modo estrito: %d credencial(is) carregada(s)", len(cfg.AuthCredentials))
+}
+
+// configureSMTPTLS monta o tls.Config usado por STARTTLS/SMTPS. Carrega o par
+// cert/key informado ou, na ausência, gera um self-signed em memória.
+func configureSMTPTLS() {
+	var cert tls.Certificate
+	var err error
+
+	if len(cfg.SMTPTLSCert) > 0 && len(cfg.SMTPTLSKey) > 0 {
+		cert, err = tls.LoadX509KeyPair(cfg.SMTPTLSCert, cfg.SMTPTLSKey)
+		if err != nil {
+			log.Fatalf("[SMTP] Erro carregando cert/key TLS: %s", err)
+		}
+		log.Println("[SMTP] TLS usando certificado informado")
+	} else {
+		cert, err = generateSelfSignedCert(cfg.Hostname)
+		if err != nil {
+			log.Fatalf("[SMTP] Erro gerando certificado self-signed: %s", err)
+		}
+		log.Println("[SMTP] TLS usando certificado self-signed gerado em memória")
+	}
+
+	cfg.TLSConfig = &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
 }
 
 // RegisterFlags registers flags
@@ -128,5 +225,13 @@ func RegisterFlags() {
 	flag.StringVar(&cfg.MaildirPath, "maildir-path", envconf.FromEnvP("MH_MAILDIR_PATH", "").(string), "Maildir path (if storage type is 'maildir')")
 	flag.BoolVar(&cfg.InviteJim, "invite-jim", envconf.FromEnvP("MH_INVITE_JIM", false).(bool), "Decide whether to invite Jim (beware, he causes trouble)")
 	flag.StringVar(&cfg.OutgoingSMTPFile, "outgoing-smtp", envconf.FromEnvP("MH_OUTGOING_SMTP", "").(string), "JSON file containing outgoing SMTP servers")
+
+	flag.StringVar(&cfg.SMTPSBindAddr, "smtps-bind-addr", envconf.FromEnvP("MH_SMTPS_BIND_ADDR", "").(string), "SMTPS (implicit TLS) bind interface and port, e.g. 0.0.0.0:1465. Empty disables it")
+	flag.BoolVar(&cfg.SMTPAuthAllowAny, "smtp-auth-allow-any", envconf.FromEnvP("MH_SMTP_AUTH_ALLOW_ANY", true).(bool), "Accept any SMTP AUTH credentials (Gmail placebo mode). Ignored when -smtp-auth-file is set")
+	flag.StringVar(&cfg.SMTPAuthFile, "smtp-auth-file", envconf.FromEnvP("MH_SMTP_AUTH_FILE", "").(string), "File with 'user:password' per line to enable strict SMTP AUTH")
+	flag.BoolVar(&cfg.SMTPRequireTLS, "smtp-require-tls", envconf.FromEnvP("MH_SMTP_REQUIRE_TLS", false).(bool), "Require STARTTLS before AUTH/MAIL, like Gmail")
+	flag.StringVar(&cfg.SMTPTLSCert, "smtp-tls-cert", envconf.FromEnvP("MH_SMTP_TLS_CERT", "").(string), "Path to PEM certificate for SMTP TLS (self-signed generated if empty)")
+	flag.StringVar(&cfg.SMTPTLSKey, "smtp-tls-key", envconf.FromEnvP("MH_SMTP_TLS_KEY", "").(string), "Path to PEM private key for SMTP TLS (self-signed generated if empty)")
+
 	Jim.RegisterFlags()
 }

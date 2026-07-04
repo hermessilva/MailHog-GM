@@ -1,0 +1,232 @@
+name: CD — E-mail (MailHog-GM)
+
+# Compila o fork MailHog-GM, roda os testes de integração (envio + leitura de
+# e-mail), publica a imagem no GHCR e faz deploy no Swarm — SUBSTITUINDO a stack
+# de e-mail que roda hoje (mailhog/mailhog:latest). A antiga é removida.
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'main.go'
+      - 'Dockerfile'
+      - 'vendor/**'
+      - 'Deploy/stack/e-mail.yaml'
+      - 'test/**'
+      - '.github/workflows/cd-email.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/mailhog-gm
+  TARGET_STACK: tokenguard-email
+
+jobs:
+  # ============================================================
+  # Testes de integração (gate): sobe MailHog-GM + testes C#
+  # ============================================================
+  test:
+    name: Integration Tests
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build + run integration tests (docker compose)
+        shell: bash
+        run: |
+          set -e
+          docker compose up --build --abort-on-container-exit --exit-code-from tests
+
+      - name: Tear down
+        if: always()
+        shell: bash
+        run: docker compose down -v || true
+
+  # ============================================================
+  # Build + push da imagem para o GHCR
+  # ============================================================
+  build-push:
+    name: Build & Push Image
+    runs-on: self-hosted
+    needs: [test]
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        shell: bash
+        env:
+          DOCKER_BUILDKIT: 1
+        run: |
+          IMAGE_NAME=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          SHA_TAG="${{ env.REGISTRY }}/${IMAGE_NAME}:${{ steps.version.outputs.version }}"
+          DEV_TAG="${{ env.REGISTRY }}/${IMAGE_NAME}:dev"
+          LATEST_TAG="${{ env.REGISTRY }}/${IMAGE_NAME}:latest"
+
+          MAX_RETRIES=3; RETRY_COUNT=0
+          until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
+            echo "Build attempt $((RETRY_COUNT + 1)) of $MAX_RETRIES..."
+            if docker build \
+              -t "$SHA_TAG" -t "$DEV_TAG" -t "$LATEST_TAG" \
+              --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+              --label "org.opencontainers.image.revision=${{ github.sha }}" \
+              . ; then echo "Build succeeded!"; break; fi
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            [ $RETRY_COUNT -lt $MAX_RETRIES ] && { sleep 10; docker builder prune -f || true; }
+          done
+          [ $RETRY_COUNT -ge $MAX_RETRIES ] && { echo "Build failed after $MAX_RETRIES attempts"; exit 1; } || true
+
+          RETRY_COUNT=0
+          until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
+            echo "Push attempt $((RETRY_COUNT + 1)) of $MAX_RETRIES..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+            if docker push "$SHA_TAG" && docker push "$DEV_TAG" && docker push "$LATEST_TAG"; then echo "Push succeeded!"; break; fi
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            [ $RETRY_COUNT -lt $MAX_RETRIES ] && sleep 5
+          done
+          [ $RETRY_COUNT -ge $MAX_RETRIES ] && { echo "Push failed after $MAX_RETRIES attempts"; exit 1; } || true
+
+  # ============================================================
+  # Deploy no Swarm — substitui a stack de e-mail existente
+  # ============================================================
+  deploy:
+    name: Deploy E-mail Stack
+    runs-on: self-hosted
+    needs: [build-push]
+    environment:
+      name: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create target directory
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ vars.STAGING_HOST }}
+          username: ${{ vars.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+          script: mkdir -p /opt/tokenguard/stacks
+
+      - name: Copy e-mail stack to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ vars.STAGING_HOST }}
+          username: ${{ vars.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+          source: "Deploy/stack/e-mail.yaml"
+          target: "/opt/tokenguard/stacks/"
+          strip_components: 2
+
+      - name: Deploy MailHog-GM to Swarm (replace legacy)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ vars.STAGING_HOST }}
+          username: ${{ vars.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+          script: |
+            set -e
+            OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+            IMAGE="ghcr.io/${OWNER}/mailhog-gm:${{ needs.build-push.outputs.version }}"
+            TARGET_STACK="${{ env.TARGET_STACK }}"
+
+            echo "Imagem: ${IMAGE}"
+
+            # Login no GHCR
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
+
+            # Rede overlay compartilhada (reaproveitada)
+            docker network create --driver overlay tokenguard_public 2>/dev/null || true
+
+            # Remove QUALQUER stack legada que rode um serviço 'mailcrab' e que não
+            # seja a nossa — libera as portas 25/2525/587 e para a antiga.
+            for svc in $(docker service ls --filter name=mailcrab --format '{{.Name}}'); do
+              NS=$(docker service inspect "$svc" --format '{{ index .Spec.Labels "com.docker.stack.namespace" }}' 2>/dev/null || true)
+              if [ -n "$NS" ] && [ "$NS" != "$TARGET_STACK" ]; then
+                echo "Removendo stack de e-mail legada: $NS"
+                docker stack rm "$NS" || true
+              fi
+            done
+
+            # Espera a stack antiga liberar as portas em modo ingress
+            sleep 20
+
+            # Pull da nova imagem
+            docker pull "${IMAGE}" || true
+
+            # Deploy (sobrepõe/atualiza a stack de e-mail)
+            IMAGE="${IMAGE}" docker stack deploy \
+              -c /opt/tokenguard/stacks/e-mail.yaml \
+              --with-registry-auth \
+              "${TARGET_STACK}"
+
+            # Estabiliza
+            sleep 15
+
+            echo "=== E-mail service status ==="
+            docker service ls | grep "${TARGET_STACK}" || true
+            docker service ps "${TARGET_STACK}_mailcrab" --no-trunc 2>/dev/null || true
+
+            # Health check: API HTTP responde dentro do container
+            echo "=== Health Check ==="
+            RETRIES=10
+            COUNT=0
+            until [ $COUNT -ge $RETRIES ]; do
+              CID=$(docker ps -q -f name="${TARGET_STACK}_mailcrab" 2>/dev/null)
+              if [ -n "$CID" ] && docker exec "$CID" wget -q -O - http://127.0.0.1:8025/api/v2/messages >/dev/null 2>&1; then
+                echo "MailHog-GM respondendo na API."
+                break
+              fi
+              COUNT=$((COUNT + 1))
+              echo "Tentativa $COUNT/$RETRIES falhou, aguardando 10s..."
+              sleep 10
+            done
+
+            if [ $COUNT -ge $RETRIES ]; then
+              echo "WARNING: health check não passou após $RETRIES tentativas."
+              docker service logs "${TARGET_STACK}_mailcrab" --tail 30 2>/dev/null || true
+              exit 1
+            fi
+
+      - name: Purge unused images on deploy host
+        if: always()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ vars.STAGING_HOST }}
+          username: ${{ vars.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          passphrase: ${{ secrets.STAGING_SSH_PASSPHRASE }}
+          script: |
+            set +e
+            echo "=== Disk usage BEFORE prune ==="
+            docker system df || true
+            docker image prune -af
+            docker builder prune -f || true
+            echo "=== Disk usage AFTER prune ==="
+            docker system df || true

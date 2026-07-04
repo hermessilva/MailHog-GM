@@ -128,11 +128,13 @@ func (apiv1 *APIv1) messages(w http.ResponseWriter, req *http.Request) {
 	switch apiv1.config.Storage.(type) {
 	case *storage.MongoDB:
 		messages, _ := apiv1.config.Storage.(*storage.MongoDB).List(0, 1000)
+		sortMessagesDesc(*messages)
 		bytes, _ := json.Marshal(messages)
 		w.Header().Add("Content-Type", "text/json")
 		w.Write(bytes)
 	case *storage.InMemory:
 		messages, _ := apiv1.config.Storage.(*storage.InMemory).List(0, 1000)
+		sortMessagesDesc(*messages)
 		bytes, _ := json.Marshal(messages)
 		w.Header().Add("Content-Type", "text/json")
 		w.Write(bytes)

@@ -342,6 +342,14 @@ func (proto *Protocol) Command(command *Command) (reply *Reply) {
 					}
 				}
 				return ReplyAuthOk()
+			case strings.HasPrefix(command.args, "XOAUTH2 "):
+				proto.logf("Got XOAUTH2 authentication")
+				if proto.ValidateAuthenticationHandler != nil {
+					if reply, ok := proto.ValidateAuthenticationHandler("XOAUTH2", strings.TrimPrefix(command.args, "XOAUTH2 ")); !ok {
+						return reply
+					}
+				}
+				return ReplyAuthOk()
 			default:
 				return ReplyUnsupportedAuth()
 			}
